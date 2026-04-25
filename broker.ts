@@ -2,7 +2,7 @@
 /**
  * subtext broker daemon
  *
- * A singleton HTTP server on localhost:7899 backed by SQLite.
+ * A singleton HTTP server on localhost:7901 backed by SQLite.
  * Tracks all registered Claude Code peers and routes messages between them.
  *
  * Auto-launched by the MCP server if not already running.
@@ -23,7 +23,7 @@ import type {
   Message,
 } from "./shared/types.ts";
 
-const PORT = parseInt(process.env.SUBTEXT_PORT ?? "7899", 10);
+const PORT = parseInt(process.env.SUBTEXT_PORT ?? "7901", 10);
 const DB_PATH = process.env.SUBTEXT_DB ?? `${process.env.HOME}/.subtext.db`;
 
 // --- Database setup ---

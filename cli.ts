@@ -11,7 +11,7 @@
  *   bun cli.ts kill-broker     — Stop the broker daemon
  */
 
-const BROKER_PORT = parseInt(process.env.SUBTEXT_PORT ?? "7899", 10);
+const BROKER_PORT = parseInt(process.env.SUBTEXT_PORT ?? "7901", 10);
 const BROKER_URL = `http://127.0.0.1:${BROKER_PORT}`;
 
 async function brokerFetch<T>(path: string, body?: unknown): Promise<T> {
