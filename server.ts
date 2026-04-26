@@ -406,12 +406,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "start_viz": {
-      // Two-step: ensure the SPARQL store exists (`git lex sync`), then start
-      // the viz HTTP+WebSocket server (`git lex serve viz`). Server runs
-      // detached so it survives this MCP server exiting.
-      const VIZ_PORT = 7878;
-      const VIZ_URL = `http://localhost:${VIZ_PORT}/`;
-
+      // Spawn `git lex serve viz` for THIS repo. git-lex itself picks the next
+      // free port starting at 7878 (so multiple agents on the same machine each
+      // get their own server). Capture stderr to learn the chosen port, then
+      // open the user's browser.
       if (!myGitRoot) {
         return {
           content: [
@@ -422,23 +420,6 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           ],
           isError: true,
         };
-      }
-
-      // If the viz server is already up on 7878, just return the URL.
-      try {
-        const probe = await fetch(VIZ_URL, { signal: AbortSignal.timeout(500) });
-        if (probe.ok || probe.status < 500) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Viz already running. Open: ${VIZ_URL}`,
-              },
-            ],
-          };
-        }
-      } catch {
-        // Not running, continue.
       }
 
       // Sync first if the store doesn't exist.
@@ -467,46 +448,65 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
       }
 
-      // Start the viz server detached.
+      // Spawn viz server detached. stderr is piped so we can read the chosen-port line.
       const vizProc = Bun.spawn(["git", "lex", "serve", "viz"], {
         cwd: myGitRoot,
-        stdio: ["ignore", "ignore", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
       vizProc.unref();
 
-      // Wait briefly for the server to come up.
-      let up = false;
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 250));
-        try {
-          const r = await fetch(VIZ_URL, { signal: AbortSignal.timeout(500) });
-          if (r.ok || r.status < 500) {
-            up = true;
-            break;
-          }
-        } catch {
-          // keep polling
+      // git-lex-serve prints "Listening on http://127.0.0.1:<port>" to stdout.
+      // Read until we see it, with a 5s timeout.
+      let chosenPort: number | null = null;
+      const stdoutReader = vizProc.stdout.getReader();
+      const decoder = new TextDecoder();
+      const deadline = Date.now() + 5000;
+      let buf = "";
+      while (Date.now() < deadline && chosenPort === null) {
+        const { value, done } = await Promise.race([
+          stdoutReader.read(),
+          new Promise<{ value?: Uint8Array; done: boolean }>((r) =>
+            setTimeout(() => r({ done: false }), 250),
+          ),
+        ]);
+        if (done) break;
+        if (value) {
+          buf += decoder.decode(value, { stream: true });
+          const m = buf.match(/127\.0\.0\.1:(\d+)/);
+          if (m) chosenPort = parseInt(m[1], 10);
         }
       }
+      stdoutReader.releaseLock();
 
-      if (!up) {
+      if (chosenPort === null) {
         const stderr = await new Response(vizProc.stderr).text();
         return {
           content: [
             {
               type: "text" as const,
-              text: `Viz server did not respond on ${VIZ_URL} within 5s.${stderr ? `\n\nstderr:\n${stderr}` : ""}`,
+              text: `Viz server did not announce a port within 5s.${stderr ? `\n\nstderr:\n${stderr}` : ""}`,
             },
           ],
           isError: true,
         };
       }
 
+      const url = `http://localhost:${chosenPort}/`;
+
+      // Open the user's browser.
+      const opener =
+        process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+      try {
+        Bun.spawn([opener, url], { stdio: ["ignore", "ignore", "ignore"] }).unref();
+      } catch (e) {
+        log(`Failed to open browser: ${e}`);
+      }
+
       return {
         content: [
           {
             type: "text" as const,
-            text: `Viz server started for ${myGitRoot}. Open: ${VIZ_URL}`,
+            text: `Viz server started for ${myGitRoot} on port ${chosenPort}. Opened: ${url}`,
           },
         ],
       };
