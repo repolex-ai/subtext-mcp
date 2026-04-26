@@ -1,7 +1,6 @@
 {
   "name": "subtext",
   "description": "Peer discovery and messaging for Claude Code instances",
-  "version": "0.1.2",
   "author": {
     "name": "repolex-ai"
   }
