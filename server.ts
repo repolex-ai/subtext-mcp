@@ -13,8 +13,6 @@
  *   { "subtext": { "command": "bun", "args": ["./server.ts"] } }
  */
 
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -456,8 +454,15 @@ async function pollAndPushMessages() {
 async function main() {
   // 0. Symlink the host platform's git-lex binaries up into bin/ so Claude Code's
   //    plugin bin/-PATH augmentation (top-level only) exposes them. No-op if no
-  //    binaries are shipped for this host.
-  setupHostBinaries(dirname(fileURLToPath(import.meta.url)));
+  //    binaries are shipped for this host. Plugin root comes from
+  //    CLAUDE_PLUGIN_ROOT, which Claude Code exports to MCP server subprocesses
+  //    (see plugins-reference.md §"Substitution variables").
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (pluginRoot) {
+    setupHostBinaries(pluginRoot);
+  } else {
+    console.error("[subtext] CLAUDE_PLUGIN_ROOT not set — skipping host-binary setup (plugin not running under Claude Code?)");
+  }
 
   // 1. Ensure broker is running
   await ensureBroker();

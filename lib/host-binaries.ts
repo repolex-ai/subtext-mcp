@@ -1,12 +1,9 @@
-// DRAFT — to be added to subtext-mcp's server.ts startup, BEFORE main()'s mcp.connect()
-//
-// Layout: bin/.platforms/<target>/* are the per-platform binaries.
-// On startup we symlink bin/.platforms/<host-target>/* → bin/* so that
-// Claude Code's plugin bin/-PATH augmentation (top-level only — confirmed
-// against docs 2026-04-26) finds them at a stable path.
+// Symlinks per-platform git-lex binaries from bin/.platforms/<target>/ up
+// into bin/* on MCP startup. Claude Code's plugin bin/-PATH augmentation
+// is top-level only, so the platform subdirs need to be surfaced.
 
 import { existsSync, mkdirSync, readdirSync, symlinkSync, unlinkSync, lstatSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 /**
  * Maps Node.js process.platform + process.arch to the Rust target triple
@@ -24,6 +21,9 @@ function detectTargetTriple(): string | null {
 /**
  * On startup: symlink bin/.platforms/<host-target>/* up into bin/* so the
  * plugin's top-level bin/ PATH entry exposes the right binaries.
+ *
+ * Symlinks are written as relative paths so they survive plugin cache
+ * rotation (reinstall, marketplace version bump — both move the cache dir).
  *
  * Idempotent — replaces stale symlinks. Silent on missing platform support
  * (logs a warning to stderr, does not crash the MCP server).
@@ -60,7 +60,9 @@ export function setupHostBinaries(pluginRoot: string): void {
       }
     }
     try {
-      symlinkSync(src, dst);
+      // Relative symlink (e.g. ".platforms/aarch64-apple-darwin/git-lex")
+      // so the link survives plugin directory moves.
+      symlinkSync(relative(topBinDir, src), dst);
     } catch (e) {
       console.error(`[subtext] Failed to symlink ${entry}: ${(e as Error).message}`);
     }
@@ -76,9 +78,3 @@ function lstatExists(p: string): boolean {
     return false;
   }
 }
-
-// Wiring in main():
-//   import { fileURLToPath } from "node:url";
-//   import { dirname } from "node:path";
-//   const pluginRoot = dirname(fileURLToPath(import.meta.url));
-//   setupHostBinaries(pluginRoot);
