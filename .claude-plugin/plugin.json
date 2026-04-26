@@ -5,5 +5,5 @@
   "author": {
     "name": "repolex-ai"
   },
-  "mcpServers": ["subtext"]
+  "mcpServers": "./.mcp.json"
 }
