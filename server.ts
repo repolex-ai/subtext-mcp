@@ -13,6 +13,8 @@
  *   { "subtext": { "command": "bun", "args": ["./server.ts"] } }
  */
 
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -31,6 +33,7 @@ import {
   getGitBranch,
   getRecentFiles,
 } from "./shared/summarize.ts";
+import { setupHostBinaries } from "./lib/host-binaries.ts";
 
 // --- Configuration ---
 
@@ -451,6 +454,11 @@ async function pollAndPushMessages() {
 // --- Startup ---
 
 async function main() {
+  // 0. Symlink the host platform's git-lex binaries up into bin/ so Claude Code's
+  //    plugin bin/-PATH augmentation (top-level only) exposes them. No-op if no
+  //    binaries are shipped for this host.
+  setupHostBinaries(dirname(fileURLToPath(import.meta.url)));
+
   // 1. Ensure broker is running
   await ensureBroker();
 
