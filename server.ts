@@ -160,6 +160,7 @@ Available tools:
 - send_message: Send a message to another instance by ID
 - set_summary: Set a 1-2 sentence summary of what you're working on (visible to other peers)
 - check_messages: Manually check for new messages
+- start_viz: Start the git-lex visualization server for the current repo and get a URL to open
 
 When you start, proactively call set_summary to describe what you're working on. This helps other instances understand your context.`,
   }
@@ -223,6 +224,15 @@ const TOOLS = [
     name: "check_messages",
     description:
       "Manually check for new messages from other Claude Code instances. Messages are normally pushed automatically via channel notifications, but you can use this as a fallback.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "start_viz",
+    description:
+      "Start the git-lex visualization server for the current repo (HTTP + WebSocket on http://localhost:7878). Runs `git lex sync` first if the knowledge graph store doesn't exist. Returns the URL to open in a browser. Idempotent — if the server is already running on the port it returns the URL without restarting.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -393,6 +403,113 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
+    }
+
+    case "start_viz": {
+      // Two-step: ensure the SPARQL store exists (`git lex sync`), then start
+      // the viz HTTP+WebSocket server (`git lex serve viz`). Server runs
+      // detached so it survives this MCP server exiting.
+      const VIZ_PORT = 7878;
+      const VIZ_URL = `http://localhost:${VIZ_PORT}/`;
+
+      if (!myGitRoot) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Not in a git repo (cwd: ${myCwd}). git-lex viz needs a repo with .lex/ initialized.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // If the viz server is already up on 7878, just return the URL.
+      try {
+        const probe = await fetch(VIZ_URL, { signal: AbortSignal.timeout(500) });
+        if (probe.ok || probe.status < 500) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Viz already running. Open: ${VIZ_URL}`,
+              },
+            ],
+          };
+        }
+      } catch {
+        // Not running, continue.
+      }
+
+      // Sync first if the store doesn't exist.
+      const { existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const storePath = join(myGitRoot, ".lex", "oxigraph");
+      if (!existsSync(storePath)) {
+        log(`No .lex/oxigraph store at ${storePath} — running 'git lex sync' first`);
+        const syncProc = Bun.spawn(["git", "lex", "sync"], {
+          cwd: myGitRoot,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const syncCode = await syncProc.exited;
+        if (syncCode !== 0) {
+          const stderr = await new Response(syncProc.stderr).text();
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `'git lex sync' failed (exit ${syncCode}):\n${stderr}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      // Start the viz server detached.
+      const vizProc = Bun.spawn(["git", "lex", "serve", "viz"], {
+        cwd: myGitRoot,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      vizProc.unref();
+
+      // Wait briefly for the server to come up.
+      let up = false;
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        try {
+          const r = await fetch(VIZ_URL, { signal: AbortSignal.timeout(500) });
+          if (r.ok || r.status < 500) {
+            up = true;
+            break;
+          }
+        } catch {
+          // keep polling
+        }
+      }
+
+      if (!up) {
+        const stderr = await new Response(vizProc.stderr).text();
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Viz server did not respond on ${VIZ_URL} within 5s.${stderr ? `\n\nstderr:\n${stderr}` : ""}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Viz server started for ${myGitRoot}. Open: ${VIZ_URL}`,
+          },
+        ],
+      };
     }
 
     default:
